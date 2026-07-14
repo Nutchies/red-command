@@ -1,8 +1,5 @@
-# Red Command
-红队指挥控制系统
+# Red Command（红队指挥控制系统）
 =======
-# Red Command
-
 Red Command 是一款综合性安全运维管理平台，提供资产管理、工具管理、录屏监控等功能。
 
 ## 功能特性
