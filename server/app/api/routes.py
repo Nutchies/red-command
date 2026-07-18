@@ -12,6 +12,10 @@ import re
 import bcrypt
 from cryptography.fernet import Fernet
 import base64
+import io
+import random
+import string
+from PIL import Image, ImageDraw, ImageFont
 
 from app.db.database import get_db
 from app.core.config import settings
@@ -32,6 +36,59 @@ from app.services.services import ClientService, ActionService
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/token")
+
+captcha_store = {}
+
+
+def generate_captcha_text(length: int = 4) -> str:
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+
+def generate_captcha_image(text: str) -> bytes:
+    width, height = 120, 40
+    image = Image.new('RGB', (width, height), (243, 244, 246))
+    draw = ImageDraw.Draw(image)
+    
+    try:
+        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 28)
+    except:
+        font = ImageFont.load_default()
+    
+    chars = list(text)
+    for i, char in enumerate(chars):
+        x = 15 + i * 25 + random.randint(-3, 3)
+        y = 5 + random.randint(-3, 3)
+        color = (random.randint(50, 150), random.randint(50, 150), random.randint(50, 150))
+        draw.text((x, y), char, font=font, fill=color)
+    
+    for _ in range(20):
+        x1, y1 = random.randint(0, width), random.randint(0, height)
+        x2, y2 = random.randint(0, width), random.randint(0, height)
+        draw.line((x1, y1, x2, y2), fill=(random.randint(100, 200), random.randint(100, 200), random.randint(100, 200)), width=1)
+    
+    for _ in range(50):
+        x, y = random.randint(0, width), random.randint(0, height)
+        draw.point((x, y), fill=(random.randint(50, 200), random.randint(50, 200), random.randint(50, 200)))
+    
+    buf = io.BytesIO()
+    image.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+@router.get("/captcha")
+async def get_captcha():
+    captcha_id = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+    captcha_text = generate_captcha_text()
+    captcha_store[captcha_id] = {"text": captcha_text.lower(), "expire": datetime.utcnow() + timedelta(minutes=5)}
+    
+    image_data = generate_captcha_image(captcha_text)
+    image_base64 = base64.b64encode(image_data).decode('utf-8')
+    
+    for key in list(captcha_store.keys()):
+        if captcha_store[key]["expire"] < datetime.utcnow():
+            del captcha_store[key]
+    
+    return {"captcha_id": captcha_id, "image_base64": image_base64}
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
@@ -82,13 +139,32 @@ def verify_password(stored_password: str, provided_password: str) -> bool:
 
 
 @router.post("/token", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
+async def login(
+    username: str = Form(...),
+    password: str = Form(...),
+    captcha_id: str = Form(...),
+    captcha_code: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    captcha_data = captcha_store.get(captcha_id)
+    if not captcha_data:
+        raise HTTPException(status_code=400, detail="验证码已过期，请刷新验证码")
     
-    if not verify_password(user.password_hash, form_data.password):
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    if captcha_data["expire"] < datetime.utcnow():
+        del captcha_store[captcha_id]
+        raise HTTPException(status_code=400, detail="验证码已过期，请刷新验证码")
+    
+    if captcha_code.lower() != captcha_data["text"]:
+        raise HTTPException(status_code=400, detail="验证码错误")
+    
+    del captcha_store[captcha_id]
+    
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
+    
+    if not verify_password(user.password_hash, password):
+        raise HTTPException(status_code=400, detail="用户名或密码错误")
 
     access_token = create_access_token(data={"sub": user.username})
     return {
@@ -99,6 +175,33 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
         "user_group": user.user_group,
         "user_id": user.id
     }
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not verify_password(current_user.password_hash, request.old_password):
+        raise HTTPException(status_code=400, detail="原密码错误")
+    
+    if len(request.new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码长度不能少于6位")
+    
+    if request.old_password == request.new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与原密码相同")
+    
+    encrypted_password = encrypt_password(request.new_password)
+    current_user.password_hash = encrypted_password
+    db.commit()
+    
+    return {"message": "密码修改成功"}
 
 
 def encrypt_password(password: str) -> str:

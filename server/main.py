@@ -153,29 +153,11 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = No
         manager.disconnect(websocket, room_id)
 
 
-http_app = FastAPI(title="HTTP Redirect")
-
-@http_app.get("/")
-async def redirect_root(request: Request):
-    return RedirectResponse(url=f"https://{request.url.hostname}:8443/", status_code=301)
-
-@http_app.get("/{full_path:path}")
-async def redirect_to_https(request: Request):
-    return RedirectResponse(url=f"https://{request.url.hostname}:8443/{request.path_params['full_path']}", status_code=301)
-
-
 if __name__ == "__main__":
     import subprocess
     import sys
     
     cert_dir = os.path.join(os.path.dirname(__file__), "cert")
-    
-    http_proc = subprocess.Popen([
-        sys.executable, "-m", "uvicorn",
-        "main:http_app",
-        "--host", "0.0.0.0",
-        "--port", "8000"
-    ])
     
     https_proc = subprocess.Popen([
         sys.executable, "-m", "uvicorn",
@@ -189,7 +171,5 @@ if __name__ == "__main__":
     try:
         https_proc.wait()
     except KeyboardInterrupt:
-        http_proc.terminate()
         https_proc.terminate()
-        http_proc.wait()
         https_proc.wait()
