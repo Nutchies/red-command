@@ -221,6 +221,13 @@ func IsScreenLocked() bool {
 		display = ":0"
 	}
 
+	if _, err := exec.LookPath("xfce4-screensaver-command"); err == nil {
+		output, err := exec.Command("xfce4-screensaver-command", "-q").Output()
+		if err == nil && strings.Contains(string(output), "The screensaver is active") {
+			return true
+		}
+	}
+
 	if _, err := exec.LookPath("loginctl"); err == nil {
 		sessionID := os.Getenv("XDG_SESSION_ID")
 		if sessionID != "" {

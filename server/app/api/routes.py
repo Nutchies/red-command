@@ -753,7 +753,10 @@ async def play_video(
                 headers={
                     "Content-Range": f"bytes {start}-{end}/{total_size}",
                     "Content-Length": str(chunk_size),
-                    "Accept-Ranges": "bytes"
+                    "Accept-Ranges": "bytes",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "Range"
                 }
             )
     
@@ -762,9 +765,40 @@ async def play_video(
         media_type=content_type,
         headers={
             "Content-Length": str(total_size),
-            "Accept-Ranges": "bytes"
+            "Accept-Ranges": "bytes",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Range"
         }
     )
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: List[int]
+
+
+@router.delete("/videos/batch")
+async def batch_delete_videos(
+    request: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if not request.ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的视频")
+    
+    deleted_count = 0
+    for video_id in request.ids:
+        video = db.query(Video).filter(Video.id == video_id).first()
+        if video:
+            file_path = video.file_path
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            db.delete(video)
+            deleted_count += 1
+    
+    db.commit()
+    
+    return {"status": "ok", "message": f"成功删除 {deleted_count} 个视频", "deleted_count": deleted_count}
 
 
 @router.delete("/videos/{video_id}")

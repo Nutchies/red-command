@@ -1682,8 +1682,13 @@
                                 IP: {{ selectedRecordingClient.ip_address }} | Client ID: {{ selectedRecordingClient.client_id }}
                             </div>
                         </div>
-                        <div class="back-btn" @click="selectedRecordingClient = null; localStorage.removeItem('selectedRecordingClientId')">
-                            ← 返回列表
+                        <div style="display: flex; gap: 12px;">
+                            <el-button type="danger" size="small" @click="batchDeleteRecordings" :disabled="selectedRecordings.length === 0">
+                                批量删除 ({{ selectedRecordings.length }})
+                            </el-button>
+                            <div class="back-btn" @click="selectedRecordingClient = null; localStorage.removeItem('selectedRecordingClientId')">
+                                ← 返回列表
+                            </div>
                         </div>
                     </div>
                     <div class="client-actions-list">
@@ -1692,7 +1697,8 @@
                             <div class="empty-text">暂无录屏记录</div>
                         </div>
                         <div v-else class="pen-test-table-wrap">
-                            <el-table :data="selectedClientVideos" style="width: 100%" class="dark-table">
+                            <el-table :data="selectedClientVideos" style="width: 100%" class="dark-table" ref="recordingsTable" @selection-change="handleRecordingSelectionChange">
+                                <el-table-column type="selection" width="55"></el-table-column>
                                 <el-table-column prop="file_size" label="文件大小" width="450">
                                     <template #default="scope">{{ formatFileSize(scope.row.file_size) }}</template>
                                 </el-table-column>
@@ -1721,6 +1727,10 @@
                             :src="videoUrl" 
                             controls 
                             autoplay
+                            muted
+                            playsinline
+                            crossorigin="anonymous"
+                            type="video/mp4"
                             style="width: 100%; max-height: 600px;"
                         ></video>
                         <div v-else style="color:#fff;text-align:center;padding:40px;">加载中...</div>
@@ -2881,6 +2891,8 @@ createApp({
         const recordings = ref([]);
         const recordPage = ref(1);
         const searchKeyword = ref('');
+        const selectedRecordings = ref([]);
+        const recordingsTable = ref(null);
         const pagedRecordings = computed(() => {
             const start = (recordPage.value - 1) * 20;
             return recordings.value.slice(start, start + 20);
@@ -3270,13 +3282,7 @@ createApp({
             loading.value = true;
             try {
                 const actionsRes = await axios.get(`${API_BASE}/actions?limit=100&action_type=realtime_command`);
-                const newActions = actionsRes.data;
-                const existingIds = new Set(recentActions.value.map(a => a.id));
-                newActions.forEach(action => {
-                    if (!existingIds.has(action.id)) {
-                        recentActions.value.unshift(action);
-                    }
-                });
+                recentActions.value = actionsRes.data;
             } catch (err) {
                 console.error('获取动作记录失败:', err);
             }
@@ -3472,11 +3478,11 @@ createApp({
                 let res;
                 if (searchKeyword.value.trim()) {
                     res = await axios.get(`${API_BASE}/videos/search`, {
-                        params: { keyword: searchKeyword.value.trim() }
+                        params: { keyword: searchKeyword.value.trim(), limit: 9999 }
                     });
                 } else {
                     res = await axios.get(`${API_BASE}/videos/search`, {
-                        params: { keyword: '' }
+                        params: { keyword: '', limit: 9999 }
                     });
                 }
                 recordings.value = res.data;
@@ -3546,6 +3552,41 @@ createApp({
                 if (err !== 'cancel') {
                     console.error('删除失败:', err);
                     ElementPlus.ElMessage.error('删除失败: ' + (err.response?.data?.detail || err.message || '未知错误'));
+                }
+            }
+        };
+
+        const handleRecordingSelectionChange = (selection) => {
+            selectedRecordings.value = selection;
+        };
+
+        const batchDeleteRecordings = async () => {
+            if (selectedRecordings.value.length === 0) {
+                ElementPlus.ElMessage.warning('请先选择要删除的视频');
+                return;
+            }
+            try {
+                await ElementPlus.ElMessageBox.confirm(`确定要删除选中的 ${selectedRecordings.value.length} 个视频吗？删除后无法恢复。`, '批量删除确认', {
+                    confirmButtonText: '确定',
+                    cancelButtonText: '取消',
+                    type: 'warning'
+                });
+
+                const ids = selectedRecordings.value.map(r => r.id);
+                await axios.delete(`${API_BASE}/videos/batch`, { data: { ids } });
+
+                ElementPlus.ElMessage.success(`成功删除 ${selectedRecordings.value.length} 个视频`);
+                const deletedIds = new Set(ids);
+                selectedClientVideos.value = selectedClientVideos.value.filter(v => !deletedIds.has(v.id));
+                recordings.value = recordings.value.filter(r => !deletedIds.has(r.id));
+                selectedRecordings.value = [];
+                if (recordingsTable.value) {
+                    recordingsTable.value.clearSelection();
+                }
+            } catch (err) {
+                if (err !== 'cancel') {
+                    console.error('批量删除失败:', err);
+                    ElementPlus.ElMessage.error('批量删除失败: ' + (err.response?.data?.detail || err.message || '未知错误'));
                 }
             }
         };
@@ -3678,6 +3719,8 @@ createApp({
                 }
             }
 
+            const uploadedTargetIp = penTestUploadForm.value.target_ip;
+            
             showPenTestUploadDialog.value = false;
             penTestUploadForm.value = {
                 target_ip: '',
@@ -3696,7 +3739,7 @@ createApp({
                 }
             }
 
-            if (selectedPenTestHost.value && selectedPenTestHost.value.target_ip === penTestUploadForm.value.target_ip) {
+            if (selectedPenTestHost.value && selectedPenTestHost.value.target_ip === uploadedTargetIp) {
                 selectPenTestHost(selectedPenTestHost.value);
             }
             loadPenTestHosts();
@@ -5187,7 +5230,7 @@ createApp({
                 loginForm, stats, clients, recentActions, activeTasks, recentPenTestResults,
                 selectedClient, clientActions, editingOrg, editOrgValue,
                 recordings, recordPage, pagedRecordings, searchKeyword, playerDialogVisible, playerContainer,
-                videoUrl, videoPlayer,
+                videoUrl, videoPlayer, selectedRecordings, recordingsTable,
                 recordingClients, selectedRecordingClient, selectedClientVideos,
                 clientSearchKeyword,
                 penTestHosts, penTestResults, selectedPenTestHost, selectedPenTestFiles,
@@ -5221,7 +5264,7 @@ createApp({
                 selectClient, formatTime, formatDateTime, formatDate, deleteClient,
                 startEditOrg, saveOrg, formatFileSize, formatDuration,
                 handleSearch, playRecording, deleteRecording,
-                selectRecordingClient,
+                selectRecordingClient, handleRecordingSelectionChange, batchDeleteRecordings,
                 loadPenTestHosts, selectPenTestHost,
                 loadPenTestResults, handlePenTestFileChange, uploadPenTestResult,
                 downloadPenTestResult, deletePenTestResult, deletePenTestHost,

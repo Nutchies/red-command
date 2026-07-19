@@ -1,0 +1,18 @@
+[Unit]
+Description=Red Command Agent
+After=network.target
+
+[Service]
+Type=simple
+User=kali
+WorkingDirectory=/home/kali/red/red_command/agent
+Environment=DISPLAY=:0
+Environment=XDG_SESSION_ID=5
+ExecStart=/home/kali/red/red_command/agent/agent --server https://localhost:8443
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

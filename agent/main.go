@@ -54,12 +54,18 @@ func main() {
 	var wasLocked bool
 
 	if rec.IsFFmpegAvailable() {
-		sessionID, err := rec.StartRecording()
-		if err != nil {
-			log.Printf("[Agent] 启动桌面录制失败: %v", err)
+		isLocked := recorder.IsScreenLocked()
+		if isLocked {
+			log.Println("[Agent] 检测到锁屏状态，暂不启动录屏")
+			wasLocked = true
 		} else {
-			currentSessionID = sessionID
-			log.Printf("[Agent] 桌面录制已启动，会话ID: %s", sessionID)
+			sessionID, err := rec.StartRecording()
+			if err != nil {
+				log.Printf("[Agent] 启动桌面录制失败: %v", err)
+			} else {
+				currentSessionID = sessionID
+				log.Printf("[Agent] 桌面录制已启动，会话ID: %s", sessionID)
+			}
 		}
 	} else {
 		log.Printf("[Agent] ffmpeg 不可用，跳过桌面录制")
@@ -94,17 +100,27 @@ func main() {
 			return
 		case <-recordTicker.C:
 			if rec.IsFFmpegAvailable() && currentSessionID != "" {
-				log.Printf("[Agent] 录制时长达到60秒，切换录制片段")
-				if err := rec.StopRecording(currentSessionID); err != nil {
-					log.Printf("[Agent] 停止录制失败: %v", err)
-				}
-				sessionID, err := rec.StartRecording()
-				if err != nil {
-					log.Printf("[Agent] 启动新录制失败: %v", err)
+				isLocked := recorder.IsScreenLocked()
+				if isLocked {
+					log.Printf("[Agent] 录制时长达到60秒，但检测到锁屏状态，停止录屏")
+					if err := rec.StopRecording(currentSessionID); err != nil {
+						log.Printf("[Agent] 停止录制失败: %v", err)
+					}
 					currentSessionID = ""
+					wasLocked = true
 				} else {
-					currentSessionID = sessionID
-					log.Printf("[Agent] 新录制已启动，会话ID: %s", sessionID)
+					log.Printf("[Agent] 录制时长达到60秒，切换录制片段")
+					if err := rec.StopRecording(currentSessionID); err != nil {
+						log.Printf("[Agent] 停止录制失败: %v", err)
+					}
+					sessionID, err := rec.StartRecording()
+					if err != nil {
+						log.Printf("[Agent] 启动新录制失败: %v", err)
+						currentSessionID = ""
+					} else {
+						currentSessionID = sessionID
+						log.Printf("[Agent] 新录制已启动，会话ID: %s", sessionID)
+					}
 				}
 			}
 		case <-ticker.C:
